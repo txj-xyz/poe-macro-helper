@@ -15,6 +15,7 @@ import overlay.engine.model.MouseButtonId
 import overlay.engine.model.TriggerSpec
 import overlay.ui.VkNames
 import overlay.ui.widgets.TriggerCaptureWidget
+import overlay.window.ClipboardSupport
 import java.util.UUID
 
 private val ACTION_TYPE_NAMES =
@@ -282,6 +283,29 @@ class BindingEditorPanel(
                 val messageBuffer = messageBuffers.getOrPut(widgetId) { ImString(action.message, 512) }
                 ImGui.setNextItemWidth(-1f)
                 ImGui.inputText("##chat-message", messageBuffer)
+                if (ImGui.beginPopupContextItem("chat-message-context-menu")) {
+                    val currentMessage = messageBuffer.get()
+                    if (ImGui.menuItem("Copy message", "Ctrl+C", false, currentMessage.isNotEmpty())) {
+                        ClipboardSupport.writeText(currentMessage)
+                    }
+                    if (ImGui.menuItem("Cut message", "Ctrl+X", false, currentMessage.isNotEmpty())) {
+                        ClipboardSupport.writeText(currentMessage)
+                        messageBuffer.set("")
+                    }
+
+                    val clipboardText = ClipboardSupport.readText()
+                    if (ImGui.menuItem("Paste (replace)", "Ctrl+V", false, clipboardText.isNotEmpty())) {
+                        messageBuffer.set(clipboardText)
+                    }
+                    if (ImGui.menuItem("Paste at end", "", false, clipboardText.isNotEmpty())) {
+                        messageBuffer.set(currentMessage + clipboardText)
+                    }
+                    ImGui.separator()
+                    if (ImGui.menuItem("Clear", "", false, currentMessage.isNotEmpty())) {
+                        messageBuffer.set("")
+                    }
+                    ImGui.endPopup()
+                }
                 if (messageBuffer.get() != action.message) {
                     onChange(action.copy(message = messageBuffer.get()))
                 }

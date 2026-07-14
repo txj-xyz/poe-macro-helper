@@ -6,6 +6,7 @@ import imgui.callback.ImStrSupplier
 import imgui.flag.ImGuiKey
 import imgui.gl3.ImGuiImplGl3
 import imgui.glfw.ImGuiImplGlfw
+import overlay.engine.model.ModifierKey
 import overlay.engine.model.MouseButtonId
 import overlay.win32.GlobalKeyEvent
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -84,6 +85,13 @@ class ImGuiLayer(private val windowHandle: Long) {
         val io = ImGui.getIO()
         while (true) {
             val event = keyboardEvents.poll() ?: break
+            // ImGui's shortcut handling uses the aggregate modifier aliases,
+            // not only the physical Left/Right key events. The global hook
+            // already gives us its current modifier state for every event.
+            io.addKeyEvent(ImGuiKey.ModCtrl, ModifierKey.CTRL in event.modifiers)
+            io.addKeyEvent(ImGuiKey.ModShift, ModifierKey.SHIFT in event.modifiers)
+            io.addKeyEvent(ImGuiKey.ModAlt, ModifierKey.ALT in event.modifiers)
+            io.addKeyEvent(ImGuiKey.ModSuper, ModifierKey.WIN in event.modifiers)
             val key = imguiKeyForVk(event.vkCode)
             if (key != ImGuiKey.None) io.addKeyEvent(key, event.isDown)
             if (event.isDown && !event.text.isNullOrEmpty()) io.addInputCharactersUTF8(event.text)

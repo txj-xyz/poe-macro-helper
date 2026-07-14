@@ -23,7 +23,8 @@ class ImportExportPanel(
     @Volatile private var busy = false
 
     fun render() {
-        ImGui.text("Import / Export")
+        ImGui.separatorText("Clipboard")
+        ImGui.textWrapped("Copy a complete profile as JSON or import JSON sent by another user.")
 
         if (ImGui.button("Copy profile JSON")) {
             ClipboardSupport.writeText(ProfileStore.encode(getCurrentProfile()))
@@ -35,6 +36,9 @@ class ImportExportPanel(
             importFromText(ClipboardSupport.readText(), "clipboard")
         }
 
+        ImGui.separatorText("Files")
+        ImGui.textWrapped("Save a portable profile file or import one from disk.")
+        ImGui.beginDisabled(busy)
         if (ImGui.button("Export profile to file...") && !busy) {
             busy = true
             Thread(::exportViaDialog, "profile-export").apply { isDaemon = true; start() }
@@ -45,11 +49,13 @@ class ImportExportPanel(
             busy = true
             Thread(::importViaDialog, "profile-import").apply { isDaemon = true; start() }
         }
+        ImGui.endDisabled()
 
         pendingImport.getAndSet(null)?.let(onImport)
 
         val message = statusMessage.get()
         if (message.isNotEmpty()) {
+            ImGui.separatorText("Status")
             ImGui.textWrapped(message)
         }
     }

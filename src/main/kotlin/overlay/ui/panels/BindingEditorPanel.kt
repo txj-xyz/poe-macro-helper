@@ -1,7 +1,6 @@
 package overlay.ui.panels
 
 import imgui.ImGui
-import imgui.flag.ImGuiTreeNodeFlags
 import imgui.type.ImBoolean
 import imgui.type.ImInt
 import imgui.type.ImString
@@ -20,8 +19,9 @@ import java.util.UUID
 
 private val ACTION_TYPE_NAMES =
     arrayOf("Key Press", "Mouse Click", "Mouse Move", "Mouse Scroll", "Chat Send", "Delay", "Sequence")
+private val CHAT_CHANNEL_NAMES = arrayOf("Local", "Global (#)", "Trade (\$)", "Party (%)")
 
-/** Full macro CRUD: add/remove/enable/rename macros, capture triggers, and edit every action type. */
+/** Two-pane macro browser with focused setup/action editing for the selected macro. */
 class BindingEditorPanel(
     private val triggerRouter: TriggerRouter,
     private val macroEngine: MacroEngine,
@@ -32,91 +32,158 @@ class BindingEditorPanel(
     private val captureWidgets = mutableMapOf<String, TriggerCaptureWidget>()
     private val nameBuffers = mutableMapOf<String, ImString>()
     private val messageBuffers = mutableMapOf<String, ImString>()
+    private var selectedMacroId: String? = null
 
     fun replaceAll(newMacros: List<Macro>) {
+        triggerRouter.cancelCapture()
+        captureWidgets.clear()
+        nameBuffers.clear()
+        messageBuffers.clear()
         macros.clear()
         macros.addAll(newMacros)
+        selectedMacroId = newMacros.firstOrNull()?.id
         sync()
     }
 
     fun render() {
-        ImGui.text("${macros.size} macro${if (macros.size == 1) "" else "s"}")
-        ImGui.sameLine()
-        if (ImGui.button("+ Add macro")) {
-            macros.add(
-                Macro(
-                    id = UUID.randomUUID().toString(),
-                    name = "New Macro",
-                    trigger = TriggerSpec.Keyboard(KeyCombo(0)),
-                    action = MacroAction.Delay(100),
-                    suppressOriginalInput = defaultSuppressOriginalInput(),
-                ),
-            )
-            sync()
-        }
-        ImGui.separator()
-
+        val listWidth = (ImGui.getContentRegionAvailX() * 0.34f).coerceIn(125f, 165f)
         var removeId: String? = null
 
-        for (macro in macros.toList()) {
-            ImGui.pushID(macro.id)
+        ImGui.beginChild("macro-list", listWidth, 0f, true)
+        ImGui.text("Macros")
+        ImGui.sameLine()
+        ImGui.textDisabled("(${macros.size})")
 
+        if (ImGui.button("+ New Macro", -1f, 0f)) addMacro()
+        ImGui.separator()
+
+        for (macro in macros) {
             val state = if (macro.enabled) "ON" else "OFF"
-            val header = "[$state] ${macro.name}  -  ${VkNames.describe(macro.trigger)}###macro-${macro.id}"
-            if (!ImGui.collapsingHeader(header, ImGuiTreeNodeFlags.DefaultOpen)) {
-                ImGui.popID()
-                continue
+            val name = macro.name.ifBlank { "Unnamed Macro" }
+            if (ImGui.selectable("[$state] $name##list-${macro.id}", selectedMacroId == macro.id)) {
+                selectMacro(macro.id)
             }
-
-            val enabledRef = ImBoolean(macro.enabled)
-            if (ImGui.checkbox("Enabled", enabledRef)) {
-                replace(macro.id) { it.copy(enabled = enabledRef.get()) }
+            if (ImGui.isItemHovered()) {
+                ImGui.beginTooltip()
+                ImGui.text(name)
+                ImGui.textDisabled("Trigger: ${VkNames.describe(macro.trigger)}")
+                ImGui.endTooltip()
             }
+        }
+        ImGui.endChild()
 
-            val showButtonRef = ImBoolean(macro.showInButtonPanel)
-            if (ImGui.checkbox("Show in Macro Buttons panel", showButtonRef)) {
-                replace(macro.id) { it.copy(showInButtonPanel = showButtonRef.get()) }
-            }
+        ImGui.sameLine()
+        ImGui.beginChild("macro-details", 0f, 0f, true)
+        val selected = macros.firstOrNull { it.id == selectedMacroId }
+        if (selected == null) {
+            ImGui.textDisabled("Select a macro to edit")
+            ImGui.spacing()
+            ImGui.textWrapped("Create a macro with the button on the left, then configure its trigger and action here.")
+        } else {
+            ImGui.pushID(selected.id)
+            ImGui.text(selected.name.ifBlank { "Unnamed Macro" })
+            ImGui.textDisabled("Trigger: ${VkNames.describe(selected.trigger)}")
 
-            val nameBuf = nameBuffers.getOrPut(macro.id) { ImString(macro.name, 128) }
-            ImGui.text("Name")
-            ImGui.setNextItemWidth(-1f)
-            ImGui.inputText("##name", nameBuf)
-            if (nameBuf.get() != macro.name) {
-                replace(macro.id) { it.copy(name = nameBuf.get()) }
-            }
-
-            if (ImGui.button("Delete")) {
-                removeId = macro.id
-            }
-
-            ImGui.text("Trigger:")
+            if (ImGui.button("Duplicate")) duplicateMacro(selected)
             ImGui.sameLine()
-            captureWidgetFor("${macro.id}.trigger").render("${macro.id}.trigger", macro.trigger)?.let { newTrigger ->
-                replace(macro.id) { it.copy(trigger = newTrigger) }
-            }
-
-            val suppressRef = ImBoolean(macro.suppressOriginalInput)
-            if (ImGui.checkbox("Suppress original input", suppressRef)) {
-                replace(macro.id) { it.copy(suppressOriginalInput = suppressRef.get()) }
-            }
-
-            renderActionEditor(macro.id, "action", macro.action) { newAction ->
-                replace(macro.id) { it.copy(action = newAction) }
-            }
-
+            if (ImGui.button("Delete")) removeId = selected.id
             ImGui.separator()
+
+            if (ImGui.beginTabBar("macro-editor-tabs")) {
+                if (ImGui.beginTabItem("Setup")) {
+                    renderSetupEditor(selected)
+                    ImGui.endTabItem()
+                }
+                if (ImGui.beginTabItem("Action")) {
+                    renderActionEditor(selected.id, "action", selected.action) { newAction ->
+                        replace(selected.id) { it.copy(action = newAction) }
+                    }
+                    ImGui.endTabItem()
+                }
+                ImGui.endTabBar()
+            }
             ImGui.popID()
         }
+        ImGui.endChild()
 
-        if (removeId != null) {
-            macros.removeAll { it.id == removeId }
-            captureWidgets.keys.removeAll { it.startsWith("$removeId.") }
-            sync()
-        }
+        removeId?.let(::removeMacro)
     }
 
-    private fun captureWidgetFor(widgetId: String) = captureWidgets.getOrPut(widgetId) { TriggerCaptureWidget(triggerRouter) }
+    private fun renderSetupEditor(macro: Macro) {
+        ImGui.separatorText("Identity")
+        ImGui.text("Name")
+        val nameBuffer = nameBuffers.getOrPut(macro.id) { ImString(macro.name, 128) }
+        ImGui.setNextItemWidth(-1f)
+        ImGui.inputText("##macro-name", nameBuffer)
+        if (nameBuffer.get() != macro.name) {
+            replace(macro.id) { it.copy(name = nameBuffer.get()) }
+        }
+
+        val enabled = ImBoolean(macro.enabled)
+        if (ImGui.checkbox("Macro enabled", enabled)) {
+            replace(macro.id) { it.copy(enabled = enabled.get()) }
+        }
+
+        val showButton = ImBoolean(macro.showInButtonPanel)
+        if (ImGui.checkbox("Show manual button", showButton)) {
+            replace(macro.id) { it.copy(showInButtonPanel = showButton.get()) }
+        }
+
+        ImGui.separatorText("Trigger")
+        ImGui.text("Activation input")
+        captureWidgetFor("${macro.id}.trigger")
+            .render("${macro.id}.trigger", macro.trigger)
+            ?.let { newTrigger -> replace(macro.id) { it.copy(trigger = newTrigger) } }
+
+        val suppress = ImBoolean(macro.suppressOriginalInput)
+        if (ImGui.checkbox("Suppress original input", suppress)) {
+            replace(macro.id) { it.copy(suppressOriginalInput = suppress.get()) }
+        }
+        ImGui.textWrapped("Suppression prevents the trigger key or mouse button from also reaching the game.")
+    }
+
+    private fun addMacro() {
+        val macro = Macro(
+            id = UUID.randomUUID().toString(),
+            name = "New Macro",
+            trigger = TriggerSpec.Keyboard(KeyCombo(0)),
+            action = MacroAction.Delay(100),
+            suppressOriginalInput = defaultSuppressOriginalInput(),
+        )
+        macros.add(macro)
+        selectedMacroId = macro.id
+        sync()
+    }
+
+    private fun duplicateMacro(source: Macro) {
+        val copy = source.copy(id = UUID.randomUUID().toString(), name = "${source.name} Copy")
+        val sourceIndex = macros.indexOfFirst { it.id == source.id }
+        macros.add((sourceIndex + 1).coerceAtMost(macros.size), copy)
+        selectedMacroId = copy.id
+        sync()
+    }
+
+    private fun removeMacro(id: String) {
+        val index = macros.indexOfFirst { it.id == id }
+        if (index < 0) return
+        triggerRouter.cancelCapture()
+        macros.removeAt(index)
+        captureWidgets.keys.removeAll { it.startsWith(id) }
+        nameBuffers.remove(id)
+        messageBuffers.keys.removeAll { it.startsWith(id) }
+        selectedMacroId = macros.getOrNull(index.coerceAtMost(macros.lastIndex))?.id
+        sync()
+    }
+
+    private fun selectMacro(id: String) {
+        if (selectedMacroId == id) return
+        triggerRouter.cancelCapture()
+        captureWidgets.clear()
+        selectedMacroId = id
+    }
+
+    private fun captureWidgetFor(widgetId: String) =
+        captureWidgets.getOrPut(widgetId) { TriggerCaptureWidget(triggerRouter) }
 
     private fun replace(id: String, transform: (Macro) -> Macro) {
         val index = macros.indexOfFirst { it.id == id }
@@ -135,133 +202,150 @@ class BindingEditorPanel(
         val widgetId = "$macroId.$path"
         ImGui.pushID(widgetId)
 
-        val typeIndex = ImInt(actionTypeIndex(action))
         ImGui.text("Action type")
+        val typeIndex = ImInt(actionTypeIndex(action))
         ImGui.setNextItemWidth(-1f)
         if (ImGui.combo("##action-type", typeIndex, ACTION_TYPE_NAMES)) {
+            clearActionEditorState(widgetId)
             onChange(defaultActionFor(typeIndex.get()))
         }
+        ImGui.spacing()
 
         when (action) {
             is MacroAction.KeyPress -> {
-                ImGui.text("Key:")
-                ImGui.sameLine()
-                captureWidgetFor("$widgetId.combo").render("$widgetId.combo", TriggerSpec.Keyboard(action.combo))?.let {
-                    if (it is TriggerSpec.Keyboard) onChange(action.copy(combo = it.combo))
-                }
-                val holdMs = ImInt(action.holdMs.toInt())
-                ImGui.setNextItemWidth(140f)
-                if (ImGui.inputInt("Hold (ms)", holdMs)) {
-                    onChange(action.copy(holdMs = holdMs.get().toLong().coerceAtLeast(0)))
+                ImGui.separatorText("Keyboard")
+                ImGui.text("Key combination")
+                captureWidgetFor("$widgetId.combo")
+                    .render("$widgetId.combo", TriggerSpec.Keyboard(action.combo))
+                    ?.let { if (it is TriggerSpec.Keyboard) onChange(action.copy(combo = it.combo)) }
+                intField("Hold duration (ms)", "hold-ms", action.holdMs.toInt()) {
+                    onChange(action.copy(holdMs = it.toLong().coerceAtLeast(0)))
                 }
             }
 
             is MacroAction.MouseClick -> {
-                val buttonIndex = ImInt(MouseButtonId.entries.indexOf(action.button))
-                val buttonNames = MouseButtonId.entries.map { VkNames.describe(it) }.toTypedArray()
+                ImGui.separatorText("Mouse click")
                 ImGui.text("Button")
+                val buttonIndex = ImInt(MouseButtonId.entries.indexOf(action.button))
+                val buttonNames = MouseButtonId.entries.map(VkNames::describe).toTypedArray()
                 ImGui.setNextItemWidth(-1f)
                 if (ImGui.combo("##mouse-button", buttonIndex, buttonNames)) {
                     onChange(action.copy(button = MouseButtonId.entries[buttonIndex.get()]))
                 }
-                val relative = ImBoolean(action.relativeToTargetWindow)
-                if (ImGui.checkbox("Relative to target window", relative)) {
-                    onChange(action.copy(relativeToTargetWindow = relative.get()))
+
+                val moveFirst = ImBoolean(action.x != null && action.y != null)
+                if (ImGui.checkbox("Move before clicking", moveFirst)) {
+                    onChange(if (moveFirst.get()) action.copy(x = 0, y = 0) else action.copy(x = null, y = null))
                 }
-                val x = ImInt(action.x ?: 0)
-                ImGui.setNextItemWidth(140f)
-                if (ImGui.inputInt("X", x)) onChange(action.copy(x = x.get()))
-                val y = ImInt(action.y ?: 0)
-                ImGui.setNextItemWidth(140f)
-                if (ImGui.inputInt("Y", y)) onChange(action.copy(y = y.get()))
+                if (moveFirst.get()) {
+                    val relative = ImBoolean(action.relativeToTargetWindow)
+                    if (ImGui.checkbox("Coordinates relative to target", relative)) {
+                        onChange(action.copy(relativeToTargetWindow = relative.get()))
+                    }
+                    intField("X coordinate", "mouse-click-x", action.x ?: 0) { onChange(action.copy(x = it)) }
+                    intField("Y coordinate", "mouse-click-y", action.y ?: 0) { onChange(action.copy(y = it)) }
+                }
             }
 
             is MacroAction.MouseMove -> {
+                ImGui.separatorText("Mouse position")
                 val relative = ImBoolean(action.relativeToTargetWindow)
-                if (ImGui.checkbox("Relative to target window", relative)) {
+                if (ImGui.checkbox("Coordinates relative to target", relative)) {
                     onChange(action.copy(relativeToTargetWindow = relative.get()))
                 }
-                val x = ImInt(action.x)
-                ImGui.setNextItemWidth(140f)
-                if (ImGui.inputInt("X", x)) onChange(action.copy(x = x.get()))
-                val y = ImInt(action.y)
-                ImGui.setNextItemWidth(140f)
-                if (ImGui.inputInt("Y", y)) onChange(action.copy(y = y.get()))
+                intField("X coordinate", "mouse-move-x", action.x) { onChange(action.copy(x = it)) }
+                intField("Y coordinate", "mouse-move-y", action.y) { onChange(action.copy(y = it)) }
             }
 
             is MacroAction.MouseScroll -> {
-                val ticks = ImInt(action.ticks)
-                ImGui.setNextItemWidth(140f)
-                if (ImGui.inputInt("Ticks (+up/-down)", ticks)) onChange(action.copy(ticks = ticks.get()))
+                ImGui.separatorText("Mouse wheel")
+                intField("Scroll ticks (+ up / - down)", "scroll-ticks", action.ticks) {
+                    onChange(action.copy(ticks = it))
+                }
             }
 
             is MacroAction.ChatSend -> {
-                val channelIndex = ImInt(ChatChannel.entries.indexOf(action.channel))
+                ImGui.separatorText("Chat message")
                 ImGui.text("Channel")
+                val channelIndex = ImInt(ChatChannel.entries.indexOf(action.channel))
                 ImGui.setNextItemWidth(-1f)
-                if (ImGui.combo("##chat-channel", channelIndex, arrayOf("Local", "Global (#)", "Trade (\$)", "Party (%)"))) {
+                if (ImGui.combo("##chat-channel", channelIndex, CHAT_CHANNEL_NAMES)) {
                     onChange(action.copy(channel = ChatChannel.entries[channelIndex.get()]))
                 }
-                ImGui.text("Open chat key:")
-                ImGui.sameLine()
-                captureWidgetFor("$widgetId.openChat").render("$widgetId.openChat", TriggerSpec.Keyboard(action.openChat))?.let {
-                    if (it is TriggerSpec.Keyboard) onChange(action.copy(openChat = it.combo))
-                }
-                val messageBuf = messageBuffers.getOrPut(widgetId) { ImString(action.message, 512) }
+
+                ImGui.text("Open chat input")
+                captureWidgetFor("$widgetId.openChat")
+                    .render("$widgetId.openChat", TriggerSpec.Keyboard(action.openChat))
+                    ?.let { if (it is TriggerSpec.Keyboard) onChange(action.copy(openChat = it.combo)) }
+
                 ImGui.text("Message")
+                val messageBuffer = messageBuffers.getOrPut(widgetId) { ImString(action.message, 512) }
                 ImGui.setNextItemWidth(-1f)
-                ImGui.inputText("##chat-message", messageBuf)
-                if (messageBuf.get() != action.message) {
-                    onChange(action.copy(message = messageBuf.get()))
+                ImGui.inputText("##chat-message", messageBuffer)
+                if (messageBuffer.get() != action.message) {
+                    onChange(action.copy(message = messageBuffer.get()))
                 }
-                ImGui.textDisabled("Sends: ${action.channel.prefix}${action.message}")
-                ImGui.text("Submit key:")
-                ImGui.sameLine()
-                captureWidgetFor("$widgetId.submit").render("$widgetId.submit", TriggerSpec.Keyboard(action.submit))?.let {
-                    if (it is TriggerSpec.Keyboard) onChange(action.copy(submit = it.combo))
+                ImGui.textWrapped("Preview: ${action.channel.prefix}${messageBuffer.get()}")
+
+                ImGui.text("Submit input")
+                captureWidgetFor("$widgetId.submit")
+                    .render("$widgetId.submit", TriggerSpec.Keyboard(action.submit))
+                    ?.let { if (it is TriggerSpec.Keyboard) onChange(action.copy(submit = it.combo)) }
+
+                intField("Delay before typing (ms)", "chat-pre-delay", action.preDelayMs.toInt()) {
+                    onChange(action.copy(preDelayMs = it.toLong().coerceAtLeast(0)))
                 }
-                val preDelay = ImInt(action.preDelayMs.toInt())
-                ImGui.setNextItemWidth(140f)
-                if (ImGui.inputInt("Pre-delay (ms)", preDelay)) {
-                    onChange(action.copy(preDelayMs = preDelay.get().toLong().coerceAtLeast(0)))
-                }
-                val postDelay = ImInt(action.postTypeDelayMs.toInt())
-                ImGui.setNextItemWidth(140f)
-                if (ImGui.inputInt("Post-type delay (ms)", postDelay)) {
-                    onChange(action.copy(postTypeDelayMs = postDelay.get().toLong().coerceAtLeast(0)))
+                intField("Delay before submit (ms)", "chat-post-delay", action.postTypeDelayMs.toInt()) {
+                    onChange(action.copy(postTypeDelayMs = it.toLong().coerceAtLeast(0)))
                 }
             }
 
             is MacroAction.Delay -> {
-                val ms = ImInt(action.ms.toInt())
-                ImGui.setNextItemWidth(140f)
-                if (ImGui.inputInt("Delay (ms)", ms)) onChange(action.copy(ms = ms.get().toLong().coerceAtLeast(0)))
+                ImGui.separatorText("Wait")
+                intField("Duration (ms)", "delay-ms", action.ms.toInt()) {
+                    onChange(action.copy(ms = it.toLong().coerceAtLeast(0)))
+                }
             }
 
             is MacroAction.Sequence -> {
-                ImGui.indent()
+                ImGui.separatorText("Sequence steps")
+                if (action.steps.isEmpty()) ImGui.textDisabled("No steps yet")
                 for ((index, step) in action.steps.withIndex()) {
-                    ImGui.pushID(index)
-                    renderActionEditor(macroId, "$path.$index", step) { newStep ->
-                        val newSteps = action.steps.toMutableList()
-                        newSteps[index] = newStep
-                        onChange(action.copy(steps = newSteps))
+                    val label = "Step ${index + 1}: ${actionTypeName(step)}##step-$index"
+                    if (ImGui.treeNode(label)) {
+                        renderActionEditor(macroId, "$path.$index", step) { newStep ->
+                            val steps = action.steps.toMutableList()
+                            steps[index] = newStep
+                            onChange(action.copy(steps = steps))
+                        }
+                        if (ImGui.button("Remove step##$index")) {
+                            val steps = action.steps.toMutableList()
+                            steps.removeAt(index)
+                            onChange(action.copy(steps = steps))
+                        }
+                        ImGui.treePop()
                     }
-                    if (ImGui.button("Remove step")) {
-                        val newSteps = action.steps.toMutableList()
-                        newSteps.removeAt(index)
-                        onChange(action.copy(steps = newSteps))
-                    }
-                    ImGui.popID()
                 }
                 if (ImGui.button("+ Add step")) {
                     onChange(action.copy(steps = action.steps + MacroAction.Delay(100)))
                 }
-                ImGui.unindent()
             }
         }
 
         ImGui.popID()
+    }
+
+    private fun intField(label: String, id: String, value: Int, onChange: (Int) -> Unit) {
+        ImGui.text(label)
+        val valueRef = ImInt(value)
+        ImGui.setNextItemWidth(-1f)
+        if (ImGui.inputInt("##$id", valueRef)) onChange(valueRef.get())
+    }
+
+    private fun clearActionEditorState(widgetId: String) {
+        triggerRouter.cancelCapture()
+        captureWidgets.keys.removeAll { it.startsWith(widgetId) }
+        messageBuffers.keys.removeAll { it.startsWith(widgetId) }
     }
 
     private fun actionTypeIndex(action: MacroAction): Int = when (action) {
@@ -273,6 +357,8 @@ class BindingEditorPanel(
         is MacroAction.Delay -> 5
         is MacroAction.Sequence -> 6
     }
+
+    private fun actionTypeName(action: MacroAction): String = ACTION_TYPE_NAMES[actionTypeIndex(action)]
 
     private fun defaultActionFor(index: Int): MacroAction = when (index) {
         0 -> MacroAction.KeyPress(KeyCombo(0))

@@ -26,6 +26,7 @@ object WindowStyler {
     private val user32 = Win32Api.INSTANCE
     private val gdi32 = GDI32.INSTANCE
     private var lastInteractiveRegions: List<WindowBounds.WindowRegion>? = null
+    private var fullClientRegionActive = false
     private var mouseCaptured = false
 
     fun hwndOf(glfwWindowHandle: Long): WinDef.HWND {
@@ -59,7 +60,7 @@ object WindowStyler {
      * window at all, so clicks go directly to the game underneath.
      */
     fun setInteractiveRegions(hwnd: WinDef.HWND, regions: List<WindowBounds.WindowRegion>) {
-        if (regions == lastInteractiveRegions) return
+        if (!fullClientRegionActive && regions == lastInteractiveRegions) return
         val combined = gdi32.CreateRectRgn(0, 0, 0, 0) ?: return
         for (region in regions) {
             if (region.right <= region.left || region.bottom <= region.top) continue
@@ -69,10 +70,27 @@ object WindowStyler {
         }
 
         // On success Windows owns the HRGN; delete it ourselves only on failure.
-        if (user32.SetWindowRgn(hwnd, combined, true) == 0) {
+        // The frame is rendered and swapped before this call, so requesting
+        // an immediate non-client redraw only introduces a competing paint
+        // between old/new regions. Reveal the already-painted surface.
+        if (user32.SetWindowRgn(hwnd, combined, false) == 0) {
             gdi32.DeleteObject(combined)
         } else {
+            fullClientRegionActive = false
             lastInteractiveRegions = regions.toList()
+        }
+    }
+
+    /**
+     * Remove the tight panel-shaped region while ImGui is moving/resizing a
+     * panel. The full backing HWND is transparent and mouse-captured for a
+     * drag, so it can render without clipping until the button is released.
+     */
+    fun setFullClientRegion(hwnd: WinDef.HWND) {
+        if (fullClientRegionActive) return
+        if (user32.SetWindowRgn(hwnd, null, false) != 0) {
+            fullClientRegionActive = true
+            lastInteractiveRegions = null
         }
     }
 

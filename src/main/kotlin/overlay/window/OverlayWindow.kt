@@ -1,9 +1,12 @@
 package overlay.window
 
 import org.lwjgl.glfw.GLFW.*
+import org.lwjgl.glfw.GLFWImage
 import org.lwjgl.opengl.GL
 import org.lwjgl.system.MemoryStack
+import org.lwjgl.system.MemoryUtil
 import org.lwjgl.system.MemoryUtil.NULL
+import javax.imageio.ImageIO
 
 /**
  * Owns the GLFW window + GL context. Transparent framebuffer + undecorated so
@@ -37,6 +40,7 @@ class OverlayWindow(title: String) {
 
         handle = glfwCreateWindow(videoMode.width(), videoMode.height(), title, NULL, NULL)
         check(handle != NULL) { "Failed to create the GLFW window" }
+        applyWindowIcon()
 
         MemoryStack.stackPush().use { stack ->
             val x = stack.mallocInt(1)
@@ -58,6 +62,48 @@ class OverlayWindow(title: String) {
     fun pollEvents() = glfwPollEvents()
 
     fun swapBuffers() = glfwSwapBuffers(handle)
+
+    /**
+     * jpackage owns the release launcher's icon. This sets the native GLFW
+     * window icon as well, which is the icon Windows sees when the app is run
+     * directly from Gradle or an IDE during development.
+     */
+    private fun applyWindowIcon() {
+        try {
+            val resource = requireNotNull(
+                OverlayWindow::class.java.getResource("/icons/macro-overlay.png"),
+            ) { "Missing window icon resource: /icons/macro-overlay.png" }
+            val image = requireNotNull(ImageIO.read(resource)) {
+                "Unable to decode window icon resource"
+            }
+            val pixels = MemoryUtil.memAlloc(image.width * image.height * 4)
+            try {
+                for (y in 0 until image.height) {
+                    for (x in 0 until image.width) {
+                        val argb = image.getRGB(x, y)
+                        pixels.put(((argb shr 16) and 0xff).toByte())
+                        pixels.put(((argb shr 8) and 0xff).toByte())
+                        pixels.put((argb and 0xff).toByte())
+                        pixels.put(((argb ushr 24) and 0xff).toByte())
+                    }
+                }
+                pixels.flip()
+
+                MemoryStack.stackPush().use { stack ->
+                    val icons = GLFWImage.malloc(1, stack)
+                    icons.position(0)
+                        .width(image.width)
+                        .height(image.height)
+                        .pixels(pixels)
+                    glfwSetWindowIcon(handle, icons)
+                }
+            } finally {
+                MemoryUtil.memFree(pixels)
+            }
+        } catch (exception: Exception) {
+            System.err.println("GLFW window icon could not be applied: ${exception.message}")
+        }
+    }
 
     fun destroy() {
         glfwDestroyWindow(handle)

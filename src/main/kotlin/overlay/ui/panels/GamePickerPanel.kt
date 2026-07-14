@@ -2,14 +2,13 @@ package overlay.ui.panels
 
 import com.sun.jna.platform.win32.WinDef
 import imgui.ImGui
-import imgui.flag.ImGuiCond
 import overlay.win32.GamePicker
 import overlay.win32.TargetWindowInfo
 
-/** Lets the user refresh the list of visible top-level windows and pick one to attach the overlay to. */
+/** Searchable-sized target list contained within the main window's Target tab. */
 class GamePickerPanel(private val ownHwnd: WinDef.HWND) {
     private var windows: List<TargetWindowInfo> = emptyList()
-    private var requestedOpenState: Boolean? = true
+    private var pickerVisible = true
     var selected: TargetWindowInfo? = null
         private set
 
@@ -25,34 +24,39 @@ class GamePickerPanel(private val ownHwnd: WinDef.HWND) {
     fun render(): Boolean {
         var changed = false
 
-        selected?.let { target ->
-            ImGui.textWrapped("Attached to: ${target.title} [${target.processName}]")
-            ImGui.sameLine()
-            if (ImGui.button("Change target")) requestedOpenState = true
+        ImGui.separatorText("Attached window")
+        val target = selected
+        if (target == null) {
+            ImGui.textDisabled("No target attached")
+            ImGui.textWrapped("Choose a window below. Once attached, macros only run while that window is in the foreground.")
+        } else {
+            ImGui.textWrapped(target.title)
+            ImGui.textDisabled(target.processName)
+            if (ImGui.button("Change target")) pickerVisible = true
             ImGui.sameLine()
             if (ImGui.button("Detach")) {
                 selected = null
-                requestedOpenState = true
+                pickerVisible = true
                 changed = true
             }
         }
 
-        requestedOpenState?.let { open ->
-            ImGui.setNextItemOpen(open, ImGuiCond.Always)
-            requestedOpenState = null
-        }
+        if (pickerVisible) {
+            ImGui.separatorText("Available windows")
+            if (ImGui.button("Refresh list")) refresh()
+            ImGui.sameLine()
+            ImGui.textDisabled("${windows.size} found")
 
-        if (ImGui.collapsingHeader("Target window picker")) {
-            if (ImGui.button("Refresh windows")) refresh()
+            ImGui.beginChild("target-window-list", 0f, 0f, true)
             for (window in windows) {
                 val label = "${window.title}  [${window.processName}]"
-                val isSelected = selected?.hwnd == window.hwnd
-                if (ImGui.selectable(label, isSelected)) {
+                if (ImGui.selectable("$label##target-${window.hwnd}", selected?.hwnd == window.hwnd)) {
                     selected = window
-                    requestedOpenState = false
+                    pickerVisible = false
                     changed = true
                 }
             }
+            ImGui.endChild()
         }
         return changed
     }

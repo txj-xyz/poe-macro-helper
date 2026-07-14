@@ -21,6 +21,7 @@ data class GlobalKeyEvent(
     val vkCode: Int,
     val scanCode: Int,
     val isDown: Boolean,
+    val modifiers: Set<ModifierKey> = emptySet(),
     val text: String? = null,
 )
 
@@ -112,6 +113,7 @@ class HookManager(
                 vkCode = vkCode,
                 scanCode = scanCode,
                 isDown = isDown,
+                modifiers = heldModifiers.toSet(),
                 text = if (isDown) translateText(vkCode, scanCode) else null,
             ),
         )

@@ -31,10 +31,17 @@ object WindowBounds {
 
     private val states = mutableMapOf<String, WindowState>()
     private val hitRegions = mutableListOf<HitRegion>()
+    private var mouseInteractionHeld = false
 
     /** Clear regions before building this frame's visible windows. */
     fun beginFrame() {
         hitRegions.clear()
+    }
+
+    /** Forget all runtime positions/sizes so windows use their defaults next frame. */
+    fun resetLayout() {
+        states.clear()
+        mouseInteractionHeld = false
     }
 
     /**
@@ -107,6 +114,20 @@ object WindowBounds {
     }
 
     fun isDraggingAnyWindow(): Boolean = states.values.any { it.dragging }
+
+    /**
+     * Latches a left-button interaction that began over any panel. This also
+     * covers ImGui resize grips, whose cursor can move beyond the old bounds
+     * before the expanded window is rendered.
+     */
+    fun isManipulatingAnyWindow(): Boolean {
+        if (!ImGui.isMouseDown(0)) {
+            mouseInteractionHeld = false
+        } else if (isDraggingAnyWindow() || isCursorOverVisibleWindow()) {
+            mouseInteractionHeld = true
+        }
+        return mouseInteractionHeld || isDraggingAnyWindow()
+    }
 
     /** Native-window regions for the currently rendered ImGui windows. */
     fun visibleWindowRegions(): List<WindowRegion> = hitRegions.map {

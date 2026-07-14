@@ -20,8 +20,11 @@ import org.lwjgl.system.MemoryUtil.NULL
  * to stick.
  */
 class TargetWindowTracker(private val glfwWindowHandle: Long) {
+    private data class ClientGeometry(val x: Int, val y: Int, val width: Int, val height: Int)
+
     private val user32 = Win32Api.INSTANCE
     private var primaryBoundsApplied = false
+    private var appliedTargetGeometry: ClientGeometry? = null
 
     @Volatile
     var target: WinDef.HWND? = null
@@ -34,6 +37,7 @@ class TargetWindowTracker(private val glfwWindowHandle: Long) {
     fun setTarget(hwnd: WinDef.HWND?) {
         target = hwnd
         primaryBoundsApplied = false
+        appliedTargetGeometry = null
     }
 
     /** Safe to call from the hook/engine threads before accepting or injecting input. */
@@ -47,6 +51,7 @@ class TargetWindowTracker(private val glfwWindowHandle: Long) {
         // is shaped to only the ImGui rectangles, so the rest remains absent
         // and fully clickable despite the full-screen backing dimensions.
         val current = target ?: run {
+            appliedTargetGeometry = null
             glfwSetWindowAttrib(glfwWindowHandle, GLFW_FLOATING, GLFW_TRUE)
             if (!primaryBoundsApplied) applyPrimaryMonitorBounds()
             glfwShowWindow(glfwWindowHandle)
@@ -56,6 +61,7 @@ class TargetWindowTracker(private val glfwWindowHandle: Long) {
 
         if (!user32.IsWindow(current)) {
             target = null
+            appliedTargetGeometry = null
             hide()
             return
         }
@@ -67,20 +73,70 @@ class TargetWindowTracker(private val glfwWindowHandle: Long) {
             return
         }
 
-        // Client area only, not GetWindowRect's full outer rect: a decorated
-        // target (visible title bar/borders, e.g. windowed-mode apps) would
-        // otherwise get its own title bar and system buttons covered by the
-        // overlay, making it impossible to move/resize/minimize/close.
-        val clientSize = WinDef.RECT()
-        user32.GetClientRect(current, clientSize)
-        val origin = WinDef.POINT()
-        user32.ClientToScreen(current, origin)
+        val geometry = clientGeometry(current) ?: run {
+            hide()
+            return
+        }
 
         glfwSetWindowAttrib(glfwWindowHandle, GLFW_FLOATING, GLFW_TRUE)
-        glfwSetWindowPos(glfwWindowHandle, origin.x, origin.y)
-        glfwSetWindowSize(glfwWindowHandle, clientSize.right - clientSize.left, clientSize.bottom - clientSize.top)
+        applyGeometry(geometry)
         glfwShowWindow(glfwWindowHandle)
         isOverlayVisible = true
+    }
+
+    /**
+     * Re-sample target geometry around presentation to avoid displaying one
+     * stale overlay position while the target is in a live Windows move loop.
+     * A mid-frame resize is hidden until the next full ImGui frame can use the
+     * new display bounds; a position-only change is safe to apply immediately.
+     */
+    fun syncToTargetForPresentation() {
+        val current = target ?: return
+        if (!user32.IsWindow(current) || user32.GetForegroundWindow() != current || user32.IsIconic(current)) {
+            hide()
+            return
+        }
+
+        val geometry = clientGeometry(current) ?: run {
+            hide()
+            return
+        }
+        val applied = appliedTargetGeometry ?: return
+        if (geometry.width != applied.width || geometry.height != applied.height) {
+            hide()
+            return
+        }
+        if (geometry.x != applied.x || geometry.y != applied.y) {
+            glfwSetWindowPos(glfwWindowHandle, geometry.x, geometry.y)
+            appliedTargetGeometry = geometry
+        }
+    }
+
+    private fun applyGeometry(geometry: ClientGeometry) {
+        val previous = appliedTargetGeometry
+        // Size first so a shrinking target never spends a native update at
+        // its new position with the previous larger overlay dimensions.
+        if (previous == null || previous.width != geometry.width || previous.height != geometry.height) {
+            glfwSetWindowSize(glfwWindowHandle, geometry.width, geometry.height)
+        }
+        if (previous == null || previous.x != geometry.x || previous.y != geometry.y) {
+            glfwSetWindowPos(glfwWindowHandle, geometry.x, geometry.y)
+        }
+        appliedTargetGeometry = geometry
+    }
+
+    /** Client area only, excluding the target's title bar and borders. */
+    private fun clientGeometry(hwnd: WinDef.HWND): ClientGeometry? {
+        val clientSize = WinDef.RECT()
+        if (!user32.GetClientRect(hwnd, clientSize)) return null
+        val origin = WinDef.POINT()
+        if (!user32.ClientToScreen(hwnd, origin)) return null
+        return ClientGeometry(
+            x = origin.x,
+            y = origin.y,
+            width = (clientSize.right - clientSize.left).coerceAtLeast(1),
+            height = (clientSize.bottom - clientSize.top).coerceAtLeast(1),
+        )
     }
 
     private fun applyPrimaryMonitorBounds() {

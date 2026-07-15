@@ -121,20 +121,20 @@ Pull requests and pushes build the artifacts without publishing a GitHub
 Release. A pushed version tag publishes the same files on the repository's
 Releases page.
 
-To publish version `1.0.1`:
+To publish version `1.0.2`:
 
-1. Set `version = "1.0.1"` in `build.gradle.kts` and commit the change.
+1. Set `version = "1.0.2"` in `build.gradle.kts` and commit the change.
 2. Create and push a matching tag:
 
 ```powershell
-git tag v1.0.1
-git push origin v1.0.1
+git tag v1.0.2
+git push origin v1.0.2
 ```
 
 The workflow rejects a tag when it does not match the Gradle version. You can
 also run it manually from **Actions > Windows Build and Release > Run
 workflow**. Leave `release_tag` empty to create workflow artifacts only, or
-enter an existing matching tag such as `v1.0.1` to publish a GitHub Release.
+enter an existing matching tag such as `v1.0.2` to publish a GitHub Release.
 Manual release runs check out that exact tag, and rerunning one safely replaces
 the release assets instead of failing when the release already exists.
 
@@ -143,7 +143,7 @@ the release assets instead of failing when the release already exists.
 Update `version` in `build.gradle.kts` before creating a new release:
 
 ```kotlin
-version = "1.0.1"
+version = "1.0.2"
 ```
 
 Do not change the upgrade UUID in the installer script. Keeping it stable lets

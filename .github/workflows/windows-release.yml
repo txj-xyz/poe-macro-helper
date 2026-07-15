@@ -44,8 +44,8 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          # Restores dependencies, wrapper distributions, and Gradle's local build cache.
-          cache-provider: basic
+          # Fine-grained cache for dependencies, wrapper distributions, and task outputs.
+          cache-provider: enhanced
           gradle-version: "9.6.1"
 
       - name: Configure parallel Gradle workers

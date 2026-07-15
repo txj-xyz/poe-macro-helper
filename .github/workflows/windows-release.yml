@@ -46,6 +46,8 @@ jobs:
         with:
           # Fine-grained cache for dependencies, wrapper distributions, and task outputs.
           cache-provider: enhanced
+          # Gradle 9.6.1 usage tracking currently removes the entire cache on Windows.
+          cache-cleanup: never
           gradle-version: "9.6.1"
 
       - name: Configure parallel Gradle workers

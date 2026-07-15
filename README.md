@@ -133,8 +133,8 @@ git push origin v1.0.1
 
 The workflow rejects a tag when it does not match the Gradle version. You can
 also run it manually from **Actions > Windows Build and Release > Run
-workflow**; manual runs create downloadable workflow artifacts but do not
-publish a GitHub Release.
+workflow**. Leave `release_tag` empty to create workflow artifacts only, or
+enter an existing matching tag such as `v1.0.1` to publish a GitHub Release.
 
 ## Versioning releases
 

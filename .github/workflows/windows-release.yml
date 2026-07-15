@@ -23,6 +23,9 @@ jobs:
     name: Build portable app and EXE installer
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      # Avoid the Windows Server 2025 D:\a root-cache path, which cache validation rejects.
+      GRADLE_USER_HOME: ${{ github.workspace }}/.gradle-user-home
     outputs:
       version: ${{ steps.version.outputs.version }}
       release_tag: ${{ steps.version.outputs.release_tag }}
@@ -46,8 +49,6 @@ jobs:
         with:
           # Fine-grained cache for dependencies, wrapper distributions, and task outputs.
           cache-provider: enhanced
-          # Gradle 9.6.1 usage tracking currently removes the entire cache on Windows.
-          cache-cleanup: never
           gradle-version: "9.6.1"
 
       - name: Configure parallel Gradle workers

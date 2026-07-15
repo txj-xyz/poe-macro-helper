@@ -49,6 +49,8 @@ jobs:
         with:
           # Fine-grained cache for dependencies, wrapper distributions, and task outputs.
           cache-provider: enhanced
+          # Usage tracking on Windows Server 2025 removes the populated cache before save.
+          cache-cleanup: never
           gradle-version: "9.6.1"
 
       - name: Configure parallel Gradle workers
@@ -151,6 +153,21 @@ jobs:
             build/release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
+
+      - name: Verify Gradle cache is populated
+        shell: pwsh
+        run: |
+          $requiredCachePaths = @(
+            (Join-Path $env:GRADLE_USER_HOME "caches\modules-2")
+            (Join-Path $env:GRADLE_USER_HOME "caches\build-cache-1")
+            (Join-Path $env:GRADLE_USER_HOME "wrapper\dists")
+          )
+          foreach ($path in $requiredCachePaths) {
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "Expected populated Gradle cache path was not found: $path"
+            }
+            Write-Host "Cache ready: $path"
+          }
 
   publish-release:
     name: Publish GitHub Release

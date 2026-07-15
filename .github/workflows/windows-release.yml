@@ -44,8 +44,16 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
+          # Restores dependencies, wrapper distributions, and Gradle's local build cache.
           cache-provider: basic
           gradle-version: "9.6.1"
+
+      - name: Configure parallel Gradle workers
+        shell: pwsh
+        run: |
+          $workers = [System.Environment]::ProcessorCount
+          "GRADLE_MAX_WORKERS=$workers" >> $env:GITHUB_ENV
+          Write-Host "Gradle will use $workers parallel worker(s) with the build cache enabled."
 
       - name: Read and validate version
         id: version
@@ -101,7 +109,8 @@ jobs:
         shell: pwsh
         run: |
           .\packaging\build-windows-release.ps1 `
-            -JpackagePath (Join-Path $env:JAVA_HOME "bin\jpackage.exe")
+            -JpackagePath (Join-Path $env:JAVA_HOME "bin\jpackage.exe") `
+            -MaxWorkers $env:GRADLE_MAX_WORKERS
 
       - name: Build single-file EXE installer
         shell: pwsh

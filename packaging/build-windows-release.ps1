@@ -1,5 +1,7 @@
 param(
-    [string]$JpackagePath
+    [string]$JpackagePath,
+    [ValidateRange(1, 64)]
+    [int]$MaxWorkers = [System.Environment]::ProcessorCount
 )
 
 $ErrorActionPreference = "Stop"
@@ -38,7 +40,8 @@ $zipPath = Join-Path $releaseRoot "MacroOverlay-Windows-x64-$appVersion.zip"
 
 Push-Location $projectRoot
 try {
-    & ".\gradlew.bat" --console=plain clean build installDist
+    Write-Host "Gradle build cache enabled; using $MaxWorkers parallel worker(s)."
+    & ".\gradlew.bat" --console=plain --build-cache --parallel "--max-workers=$MaxWorkers" clean build installDist
     if ($LASTEXITCODE -ne 0) { throw "Gradle build failed with exit code $LASTEXITCODE." }
 
     New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null

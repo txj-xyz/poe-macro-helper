@@ -135,6 +135,8 @@ The workflow rejects a tag when it does not match the Gradle version. You can
 also run it manually from **Actions > Windows Build and Release > Run
 workflow**. Leave `release_tag` empty to create workflow artifacts only, or
 enter an existing matching tag such as `v1.0.1` to publish a GitHub Release.
+Manual release runs check out that exact tag, and rerunning one safely replaces
+the release assets instead of failing when the release already exists.
 
 ## Versioning releases
 

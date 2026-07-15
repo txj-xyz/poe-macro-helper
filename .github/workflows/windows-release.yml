@@ -30,6 +30,9 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v6
+        with:
+          # Manual release runs build the exact tagged revision being published.
+          ref: ${{ inputs.release_tag || github.ref }}
 
       - name: Set up JDK 21
         uses: actions/setup-java@v5
@@ -42,6 +45,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
         with:
           cache-provider: basic
+          gradle-version: "9.6.1"
 
       - name: Read and validate version
         id: version
@@ -151,7 +155,7 @@ jobs:
           name: MacroOverlay-Windows-${{ needs.build-windows.outputs.version }}
           path: release-assets
 
-      - name: Publish GitHub Release
+      - name: Create or update GitHub Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -164,8 +168,34 @@ jobs:
             throw "Expected a portable ZIP, EXE installer, and checksum file."
           }
 
-          gh release create $env:RELEASE_TAG @assets `
+          gh release view $env:RELEASE_TAG `
             --repo "$env:GITHUB_REPOSITORY" `
-            --verify-tag `
-            --generate-notes `
-            --title "Macro Overlay ${{ needs.build-windows.outputs.version }}"
+            --json tagName *> $null
+          $releaseExists = $LASTEXITCODE -eq 0
+
+          if ($releaseExists) {
+            gh release upload $env:RELEASE_TAG @assets `
+              --repo "$env:GITHUB_REPOSITORY" `
+              --clobber
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to upload assets to existing release '$env:RELEASE_TAG'."
+            }
+
+            gh release edit $env:RELEASE_TAG `
+              --repo "$env:GITHUB_REPOSITORY" `
+              --title "Macro Overlay ${{ needs.build-windows.outputs.version }}" `
+              --latest
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to update existing release '$env:RELEASE_TAG'."
+            }
+          } else {
+            gh release create $env:RELEASE_TAG @assets `
+              --repo "$env:GITHUB_REPOSITORY" `
+              --verify-tag `
+              --generate-notes `
+              --latest `
+              --title "Macro Overlay ${{ needs.build-windows.outputs.version }}"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to create release '$env:RELEASE_TAG'."
+            }
+          }
